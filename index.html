@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Heyecan Oyunu: Şehirden Lunaparka</title>
+<style>
+  :root { --pad: 12px; --br: 12px; --shadow: 0 8px 24px rgba(0,0,0,.15); }
+  body { margin:0; font-family: ui-rounded, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0e1327; color:#f2f6ff; }
+  header { padding: var(--pad); text-align:center; background: linear-gradient(90deg,#1d2b64,#f8cdda); -webkit-background-clip:text; -webkit-text-fill-color:transparent; font-weight:900; letter-spacing:.5px; }
+  #game { max-width: 880px; margin: 0 auto; padding: var(--pad); }
+  .card { background: #141b3a; border-radius: var(--br); padding: var(--pad); box-shadow: var(--shadow); }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  .pill { background:#0b1028; padding:8px 12px; border-radius:999px; border:1px solid #2a356e;}
+  button { background:#3a49b8; border:none; color:white; padding:10px 14px; border-radius:10px; font-weight:700; cursor:pointer; }
+  button[disabled]{ opacity:.45; cursor:not-allowed; }
+  canvas { background: #0b1028; border-radius: var(--br); width:100%; height:auto; image-rendering: crisp-edges; }
+  .tiny { opacity:.8; font-size:.9rem; }
+  .ride { flex:1 1 180px; display:flex; flex-direction:column; gap:8px; background:#101736; padding:12px; border:1px solid #2a356e; border-radius:12px; }
+  .ride h3 { margin:0; }
+  .green { color:#7CFF7C; }
+</style>
+</head>
+<body>
+  <header><h1>Şehirden Lunaparka: Heyecan Oyunu</h1></header>
+  <div id="game" class="card">
+    <div class="row" style="justify-content:space-between; margin-bottom:8px;">
+      <div class="pill">💰 Para: <span id="money">0</span></div>
+      <div class="pill">🎯 Hedef (Şehir): 100</div>
+      <div class="pill">🎢 Lunapark Biletin: <span id="ticket">❌</span></div>
+    </div>
+
+    <div id="city" class="card" style="margin-top:8px;">
+      <h2>🏙️ Şehir Bölümü – Paraları Yakala!</h2>
+      <p class="tiny">Amaç: 100 altın. Ekrana düşen paraları <b>tıkla</b>. Kaçırırsan kaybolur.</p>
+      <canvas id="cityCanvas" width="800" height="300"></canvas>
+      <div class="row" style="margin-top:8px;">
+        <button id="startCity">Şehirde Başlat</button>
+        <button id="toPark" disabled>🎡 Lunaparka Git</button>
+        <button id="resetCity">Sıfırla</button>
+      </div>
+    </div>
+
+    <div id="park" class="card" style="margin-top:12px; display:none;">
+      <h2>🎡 Lunapark – 3 Roller Coaster</h2>
+      <p class="tiny">İpucu: Göstergedeki <span class="green">YEŞİL</span> alandayken tıkla ya da <b>Boşluk</b> tuşuna bas. İsabet ne kadar iyi → kazanç o kadar yüksek!</p>
+      <div class="row">
+        <div class="ride">
+          <h3>🐉 Ejder (Kolay)</h3>
+          <div class="tiny">Ödül: 20–60</div>
+          <button class="rideBtn" data-ride="easy">BİN</button>
+          <div class="gauge" data-gauge="easy"></div>
+        </div>
+        <div class="ride">
+          <h3>👻 Hayalet (Orta)</h3>
+          <div class="tiny">Ödül: 30–90</div>
+          <button class="rideBtn" data-ride="medium">BİN</button>
+          <div class="gauge" data-gauge="medium"></div>
+        </div>
+        <div class="ride">
+          <h3>⚡ Yıldırım (Zor)</h3>
+          <div class="tiny">Ödül: 50–130</div>
+          <button class="rideBtn" data-ride="hard">BİN</button>
+          <div class="gauge" data-gauge="hard"></div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button id="backToCity">Şehre Dön ve Para Kazan</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ------------------------- GENEL DURUM ------------------------- */
+const moneyEl = document.getElementById('money');
+const ticketEl = document.getElementById('ticket');
+const cityBox = document.getElementById('city');
+const parkBox = document.getElementById('park');
+const toParkBtn = document.getElementById('toPark');
+const startCityBtn = document.getElementById('startCity');
+const resetCityBtn = document.getElementById('resetCity');
+const backToCityBtn = document.getElementById('backToCity');
+
+let money = 0;
+let hasTicket = false;
+
+function setMoney(v){ money = Math.max(0, Math.floor(v)); moneyEl.textContent = money; }
+function setTicket(v){ hasTicket = v; ticketEl.textContent = v ? "✅" : "❌"; }
+
+/* ------------------------- ŞEHİR MİNİ OYUNU ------------------------- */
+const cityCanvas = document.getElementById('cityCanvas');
+const ctx = cityCanvas.getContext('2d');
+let coins = [];
+let runningCity = false;
+let lastSpawn = 0;
+
+function spawnCoin(){
+  const x = Math.random() * (cityCanvas.width - 24) + 12;
+  const speed = 1.2 + Math.random()*1.8;  // düşme hızı
+  coins.push({x, y:-20, r:14, speed, alive:true, value: 5 + Math.floor(Math.random()*8)});
+}
+
+function drawCity(){
+  ctx.clearRect(0,0,cityCanvas.width, cityCanvas.height);
+  // Arka plan yıldız/ışık noktaları
+  for(let i=0;i<40;i++){
+    ctx.fillStyle = "rgba(255,255,255,0.05)";
+    ctx.fillRect(Math.random()*cityCanvas.width, Math.random()*cityCanvas.height, 2, 2);
+  }
+  // Zemin
+  ctx.fillStyle = "#091022";
+  ctx.fillRect(0, cityCanvas.height-28, cityCanvas.width, 28);
+
+  // Paralar
+  coins.forEach(c=>{
+    if(!c.alive) return;
+    c.y += c.speed;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.r, 0, Math.PI*2);
+    ctx.fillStyle = "#FFD34D";
+    ctx.fill();
+    ctx.strokeStyle = "#9a7318";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.fillStyle="#3b2900";
+    ctx.font="bold 14px sans-serif";
+    ctx.textAlign="center";
+    ctx.fillText("₺", c.x, c.y+4);
+
+    if(c.y - c.r > cityCanvas.height){ c.alive = false; }
+  });
+
+  // Hedef çizgisi ve bilgi
+  ctx.fillStyle="#ffffff";
+  ctx.font="12px sans-serif";
+  ctx.fillText("Paraları tıkla! 100 altına ulaşınca lunaparka gidebilirsin.", 12, 20);
+}
+
+function cityLoop(ts){
+  if(!runningCity) return;
+  if(!lastSpawn || ts - lastSpawn > 900){ // ~0.9 sn’de bir para
+    spawnCoin();
+    lastSpawn = ts;
+  }
+  drawCity();
+  coins = coins.filter(c=>c.alive);
+  requestAnimationFrame(cityLoop);
+}
+
+cityCanvas.addEventListener('click', (e)=>{
+  if(!runningCity) return;
+  const rect = cityCanvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (cityCanvas.width/rect.width);
+  const my = (e.clientY - rect.top) * (cityCanvas.height/rect.height);
+  coins.forEach(c=>{
+    const dx = mx - c.x, dy = my - c.y;
+    if(c.alive && Math.hypot(dx,dy) <= c.r){
+      c.alive = false;
+      setMoney(money + c.value);
+      // ufak parıltı
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.r+6, 0, Math.PI*2);
+      ctx.strokeStyle="rgba(255, 235, 120, .6)";
+      ctx.lineWidth=4; ctx.stroke();
+      // Bilet kontrolü
+      if(!hasTicket && money >= 100){
+        setTicket(true);
+        toParkBtn.disabled = false;
+      }
+    }
+  });
+});
+
+startCityBtn.onclick = ()=>{
+  if(runningCity) return;
+  runningCity = true;
+  lastSpawn = 0;
+  requestAnimationFrame(cityLoop);
+};
+resetCityBtn.onclick = ()=>{
+  coins = [];
+  runningCity = false;
+  drawCity();
+};
+toParkBtn.onclick = ()=>{
+  if(!hasTicket) return;
+  cityBox.style.display = "none";
+  parkBox.style.display = "block";
+};
+
+/* ------------------------- LUNAPARK MİNİ OYUNU ------------------------- */
+const rideBtns = document.querySelectorAll('.rideBtn');
+const gauges = {
+  easy:  document.querySelector('[data-gauge="easy"]'),
+  medium:document.querySelector('[data-gauge="medium"]'),
+  hard:  document.querySelector('[data-gauge="hard"]'),
+};
+
+// Basit gösterge çizimi (canvas yerine CSS + SVG'siz)
+function renderGauge(el, pos, greenStart, greenEnd){
+  el.style.height="24px";
+  el.style.position="relative";
+  el.innerHTML = "";
+  const bar = document.createElement('div');
+  bar.style.background="#0b1028";
+  bar.style.border="1px solid #2a356e";
+  bar.style.borderRadius="999px";
+  bar.style.height="100%";
+  bar.style.position="relative";
+  el.appendChild(bar);
+
+  const green = document.createElement('div');
+  green.style.position="absolute";
+  green.style.left = (greenStart*100)+"%";
+  green.style.width = ((greenEnd-greenStart)*100)+"%";
+  green.style.top="0";
+  green.style.bottom="0";
+  green.style.background="rgba(80,255,120,.35)";
+  green.style.borderRadius="999px";
+  bar.appendChild(green);
+
+  const marker = document.createElement('div');
+  marker.style.position="absolute";
+  marker.style.top="-6px";
+  marker.style.width="4px";
+  marker.style.bottom="-6px";
+  marker.style.left=(pos*100)+"%";
+  marker.style.background="#fff";
+  marker.style.borderRadius="2px";
+  bar.appendChild(marker);
+}
+
+// Her ride için ayarlar
+const RIDE_CONFIG = {
+  easy:   { speed: 1.5, greenStart: .38, greenEnd: .62, reward:[20,60], name:"Ejder" },
+  medium: { speed: 2.2, greenStart: .42, greenEnd: .58, reward:[30,90], name:"Hayalet" },
+  hard:   { speed: 3.0, greenStart: .46, greenEnd: .54, reward:[50,130], name:"Yıldırım" }
+};
+
+let anim = null;
+let currentRide = null;
+let pos = 0.0; // 0..1
+let dir = 1;
+
+function startRide(key){
+  currentRide = key;
+  pos = Math.random(); dir = Math.random()<.5? -1: 1;
+  runGauge();
+}
+
+function runGauge(){
+  cancelAnimationFrame(anim);
+  const cfg = RIDE_CONFIG[currentRide];
+  function step(){
+    pos += dir * cfg.speed / 120; // hız
+    if(pos>1){ pos=1; dir=-1; }
+    if(pos<0){ pos=0; dir=1; }
+    Object.keys(gauges).forEach(k=>{
+      renderGauge(gauges[k], k===currentRide? pos: 0.5, RIDE_CONFIG[k].greenStart, RIDE_CONFIG[k].greenEnd);
+    });
+    anim = requestAnimationFrame(step);
+  }
+  step();
+}
+
+function stopRide(){
+  if(!currentRide) return;
+  const cfg = RIDE_CONFIG[currentRide];
+  const inGreen = pos >= cfg.greenStart && pos <= cfg.greenEnd;
+
+  let gain = 0;
+  if(inGreen){
+    // merkeze ne kadar yakınsa o kadar yüksek ödül
+    const center = (cfg.greenStart + cfg.greenEnd)/2;
+    const dist = Math.abs(pos - center) / ((cfg.greenEnd - cfg.greenStart)/2);
+    const quality = Math.max(0, 1 - dist); // 0..1
+    const [minR, maxR] = cfg.reward;
+    gain = Math.round(minR + quality*(maxR - minR));
+  } else {
+    gain = -50 //-Math.floor((minR + maxR)/2); // ortalama ödülün 1/2'si kadar para kaybet
+  }
+  setMoney(money + gain);
+
+  // Küçük bildirim
+  const name = cfg.name;
+  alert(`🎢 ${name}: ${inGreen ? "MÜKEMMEL!" : "Iska!"}  Kazanç: ${gain} altın`);
+  currentRide = null;
+  cancelAnimationFrame(anim);
+  Object.keys(gauges).forEach(k=>renderGauge(gauges[k], .5, RIDE_CONFIG[k].greenStart, RIDE_CONFIG[k].greenEnd));
+}
+
+rideBtns.forEach(btn=>{
+  btn.addEventListener('click', ()=> startRide(btn.dataset.ride));
+});
+
+document.addEventListener('keydown', (e)=>{
+  if(e.code === 'Space'){ e.preventDefault(); stopRide(); }
+});
+Object.values(gauges).forEach(el=> renderGauge(el,.5,.4,.6));
+
+backToCityBtn.onclick = ()=>{
+  parkBox.style.display="none";
+  cityBox.style.display="block";
+};
+
+/* ------------------------- BAŞLANGIÇ ------------------------- */
+setMoney(0); setTicket(false); drawCity();
+</script>
+</body>
+</html>
